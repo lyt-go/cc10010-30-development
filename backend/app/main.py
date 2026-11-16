@@ -12,6 +12,8 @@ from app.config import settings
 from app.routers import ROUTERS
 from app.store import store
 
+import app.bootstrap  # noqa: F401  启动时补全示例模板版本与作业绑定
+
 app = FastAPI(title="数据仓库ETL任务编排平台", version="1.0.0")
 
 app.add_middleware(

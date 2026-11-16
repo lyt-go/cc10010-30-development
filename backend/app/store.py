@@ -4,9 +4,12 @@
 """
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 from app.seed import SEED_ROWS
+
+INTERNAL_TABLES = {"sqltpl_version", "etljob_binding"}
 
 
 class Store:
@@ -14,9 +17,18 @@ class Store:
         self._tables: dict[str, list[dict[str, Any]]] = {
             name: [dict(row) for row in rows] for name, rows in SEED_ROWS.items()
         }
+        self._tables.setdefault("sqltpl_version", [])
+        self._tables.setdefault("etljob_binding", [])
+        # 模板发布与作业绑定需要「检查 + 写入」原子完成；FastAPI 的同步路由跑在
+        # 线程池里，这里用可重入锁把同一进程内的并发请求串起来。
+        self.lock = threading.RLock()
 
     def module_names(self) -> list[str]:
         return sorted(self._tables)
+
+    def public_module_names(self) -> list[str]:
+        """对外的业务模块：模板版本与作业绑定是内部关联表，不进概览。"""
+        return sorted(name for name in self._tables if name not in INTERNAL_TABLES)
 
     def rows(self, module: str) -> list[dict[str, Any]]:
         return self._tables.setdefault(module, [])
@@ -29,7 +41,7 @@ class Store:
 
     def overview(self) -> dict[str, object]:
         modules: list[dict[str, object]] = []
-        for name in self.module_names():
+        for name in self.public_module_names():
             rows = self.rows(name)
             modules.append({
                 "name": name,

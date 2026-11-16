@@ -61,11 +61,43 @@ npm run dev
 | 元数据存储 | `metastore` | 元数据表 | 表编号、表名、所属数仓层 |
 | 资源配置 | `resource` | 资源池 | 池编号、池名称、最大并发数 |
 | SLA监控 | `slavalidate` | SLA规则 | 规则编号、适用作业、完成截止时间 |
-| SQL模板 | `sqltpl` | 模板定义 | 模板编号、模板名称、模板类型 |
+| SQL模板 | `sqltpl` | 模板定义 / 模板版本 | 模板编号、模板名称、模板类型、模板版本、快照摘要 |
 | 数据备份 | `backuprestore` | 备份策略 | 策略编号、数据表名、备份周期 |
 | 日志归档 | `logarchive` | 归档策略 | 策略编号、日志类型、保留天数 |
 | 通知渠道 | `notifychan` | 渠道配置 | 渠道编号、渠道类型、接收地址 |
 | 发布计划 | `publishplan` | 发布单 | 发布编号、发布内容、变更说明 |
+
+## SQL模板版本发布与ETL作业绑定
+
+SQL模板的作业消费链路是「模板定义 → 不可变模板版本 → 作业绑定」：
+
+1. **创建版本**：`POST /api/sqltpl/{模板ID}/versions`，提交 `模板版本`、`SQL片段`、
+   `参数占位符`、`参数默认值`。占位符必须与 SQL 片段中的 `{{ 参数名 }}` 完全一致，
+   重复占位符、未声明的默认值都会在创建时被拒绝。
+2. **发布版本**：`POST /api/sqltpl/{模板ID}/versions/{版本ID}/publish`。发布是原子的：
+   同一模板同一时刻只有一个「已发布」版本，其余已发布版本变成「已替代」；
+   重复发布同一版本是幂等的。发布时会把模板状态与作业清单的
+   `模板发布状态` 一起回写（`已是最新` / `发现新版本`）。
+3. **上传 / 导入 / 导出**：`POST /api/sqltpl/{模板ID}/versions/upload` 上传 SQL 文件生成草稿；
+   `GET /api/sqltpl/{模板ID}/versions/{版本ID}/file` 下载版本 SQL；
+   `GET /api/sqltpl/export/bundle` 打包全部发布版本，`POST /api/sqltpl/import`
+   （multipart 或 JSON）再导入。导入按内容指纹去重，SQL 片段逐字保留。
+4. **作业绑定**：`POST /api/etljob/{作业ID}/bind-template`，提交 `模板ID`/`模板编号` +
+   `模板版本ID`/`模板版本` + `参数绑定`。只有「已发布」与「已替代」版本可绑定；
+   参数按快照默认值补全并渲染 SQL。同一作业、同一版本、同一参数重复提交
+   只生成一个绑定结果。可选 `对侧作业编号`，要求对侧作业已绑定同一版本。
+5. **回查**：`GET /api/etljob/{作业ID}/binding` 返回绑定版本、快照摘要、参数绑定、
+   参数绑定摘要与渲染 SQL；`GET /api/etljob` 列表直接带出模板版本、绑定状态与
+   模板发布状态。`GET /api/etljob/bindings` 支持按作业或模板过滤绑定结果。
+
+发布新版本不会改写已有作业的绑定：旧作业继续使用原版本快照，列表上只标记
+「发现新版本」，由作业自行重新绑定。
+
+核对脚本：
+
+```bash
+cd backend && .venv/bin/python scripts/verify_template_binding.py
+```
 
 ## 约定
 
